@@ -3,6 +3,7 @@ import threading
 import traceback
 import sys
 import time
+import json
 
 
 class VoiceClient(object):
@@ -66,32 +67,49 @@ class TCPCommandHandler(socketserver.BaseRequestHandler):
     def handle(self):
         while True:
             try:
-                data = self.request.recv(1024).strip()
+                data = self.request.recv(8192).strip()
+                request = json.loads(data[:data.index(b'\x00')].decode())              
             except ConnectionResetError:
                 self.server.disconnect(client_id)
                 return
-            client_id = int.from_bytes(data[0:4], byteorder='little')
-            message_length = int.from_bytes(data[4:8], byteorder='little')
+            client_id = request['client_id']
+            command = request['command']
             self.server.add_client_if_new(client_id, self.request)
-            data = data[8:8+message_length].decode('ascii')
-            if len(data) == 0:
-                self.request.sendall("ok".encode())
+            if command == "establish":
+                json_data = {
+                    "command": "ack",
+                    "message": command
+                }
+                self.request.sendall(json.dumps(json_data).encode())
                 self.server.update_voice_clients()
-            elif data == "voice connect":
+            elif command == "voice connect":
+                json_data = {
+                    "command": "ack",
+                    "message": command
+                }
                 self.server.voice_connect(client_id)
-                self.request.sendall("voice connect ok".encode())
+                self.request.sendall(json.dumps(json_data).encode())
 
                 self.server.update_voice_clients()
-            elif data == "voice disconnect":
+            elif command == "voice disconnect":
+                json_data = {
+                    "command": "ack",
+                    "message": command
+                }
                 self.server.voice_disconnect(client_id)
-                self.request.sendall("voice disconnect ok".encode())
+                self.request.sendall(json.dumps(json_data).encode())
 
                 self.server.update_voice_clients()
-            elif data[0:5] == "text ":
-                self.server.text_message(client_id, data[5:])
+            elif command == "text message":
+                self.server.text_message(client_id, request)
             else:
-                print(data)
-                self.request.sendall("not ok".encode())
+                json_data = {
+                    "command": "nack",
+                    "message": "unknown command"
+                }
+                print("received unknown command from " + str(client_id) + ": " + command)
+                self.request.sendall(json.dumps(json_data).encode())
+            print()
 
 
 class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -103,8 +121,12 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
 
     def update_voice_clients(self):
         users_str = "".join([str(c).zfill(8) for c in self.voice_server.allowed_connections])
+        json_data = {
+            "command": "update_voice_users",
+            "users": [c for c in self.voice_server.allowed_connections]
+        }
         for client in self.connections:
-            client.socket.sendall(("users " + users_str).encode())
+            client.socket.sendall(json.dumps(json_data).encode())
 
     def add_client_if_new(self, client_id, socket):
         for client in self.connections:
@@ -120,13 +142,19 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
                 self.connections.remove(client)
                 print("command disconnect:", client_id)
                 print("command clients:", [cli.client_id for cli in self.connections])
-                print()
                 break
         self.voice_disconnect(client_id)
 
-    def text_message(self, client_id, message):
+    def text_message(self, client_id, request):
+        response = {
+            "command": "new_message",
+            "message": {
+                "sender_id": str(client_id),
+                "text": request["message"]
+            }
+        }
         for client in self.connections:
-            client.socket.sendall(("text " + str(client_id).zfill(8) + message).encode())
+            client.socket.sendall((json.dumps(response)).encode())
 
     def voice_connect(self, client_id):
         if self.voice_server is None:
@@ -166,11 +194,10 @@ command_server.attach_voice_server(voice_server)
 
 print("running")
 
-while True:
-    try:
-        voice_server_thread.join()
-        command_server_thread.join()
-    except:
-        command_server.server_close()
-        voice_server.server_close()
-        traceback.print_exc()
+try:
+    voice_server_thread.join()
+    command_server_thread.join()
+except:
+    command_server.server_close()
+    voice_server.server_close()
+    traceback.print_exc()
