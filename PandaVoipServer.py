@@ -31,6 +31,8 @@ class UDPVoiceHandler(socketserver.BaseRequestHandler):
             if not client.am_i(client_id, addr):
                 if (client.client_id in self.server.allowed_connections):
                     self.server.socket.sendto(data, client.addr)
+                else:
+                    self.connections.remove(client)
 
 
 class ThreadedVoiceServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
