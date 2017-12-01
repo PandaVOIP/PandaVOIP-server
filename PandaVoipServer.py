@@ -76,7 +76,7 @@ class TCPCommandHandler(socketserver.BaseRequestHandler):
                         "command": "nack",
                         "message": "invalid json"
                     }
-                    self.request.sendall(json.dumps(json_data).encode())
+                    self.server.send_data(self.request, json.dumps(json_data))
                     continue
             except ConnectionResetError:
                 self.server.disconnect(client_id)
