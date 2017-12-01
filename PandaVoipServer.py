@@ -80,7 +80,7 @@ class TCPCommandHandler(socketserver.BaseRequestHandler):
                     "command": "ack",
                     "message": command
                 }
-                self.request.sendall(json.dumps(json_data).encode())
+                self.server.send_data(self.request, json.dumps(json_data))
                 self.server.update_voice_clients()
             elif command == "voice connect":
                 json_data = {
@@ -88,7 +88,7 @@ class TCPCommandHandler(socketserver.BaseRequestHandler):
                     "message": command
                 }
                 self.server.voice_connect(client_id)
-                self.request.sendall(json.dumps(json_data).encode())
+                self.server.send_data(self.request, json.dumps(json_data))
 
                 self.server.update_voice_clients()
             elif command == "voice disconnect":
@@ -97,7 +97,7 @@ class TCPCommandHandler(socketserver.BaseRequestHandler):
                     "message": command
                 }
                 self.server.voice_disconnect(client_id)
-                self.request.sendall(json.dumps(json_data).encode())
+                self.server.send_data(self.request, json.dumps(json_data))
 
                 self.server.update_voice_clients()
             elif command == "text message":
@@ -108,8 +108,6 @@ class TCPCommandHandler(socketserver.BaseRequestHandler):
                     "message": "unknown command"
                 }
                 print("received unknown command from " + str(client_id) + ": " + command)
-                self.request.sendall(json.dumps(json_data).encode())
-            print()
 
 
 class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -119,6 +117,11 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         self.connections = []
         self.voice_server = None
 
+    def send_data(self, socket, message):
+        length = len(message.encode())
+        socket.sendall(str(length).zfill(10).encode())
+        socket.sendall(message.encode())
+
     def update_voice_clients(self):
         users_str = "".join([str(c).zfill(8) for c in self.voice_server.allowed_connections])
         json_data = {
@@ -126,7 +129,7 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
             "users": [c for c in self.voice_server.allowed_connections]
         }
         for client in self.connections:
-            client.socket.sendall(json.dumps(json_data).encode())
+            self.send_data(json.dumps(json_data))
 
     def add_client_if_new(self, client_id, socket):
         for client in self.connections:
@@ -154,7 +157,7 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
             }
         }
         for client in self.connections:
-            client.socket.sendall((json.dumps(response)).encode())
+            self.send_data(client.socket, json.dumps(response))
 
     def voice_connect(self, client_id):
         if self.voice_server is None:
