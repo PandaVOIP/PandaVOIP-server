@@ -68,7 +68,16 @@ class TCPCommandHandler(socketserver.BaseRequestHandler):
         while True:
             try:
                 data = self.request.recv(8192).strip()
-                request = json.loads(data[:data.index(b'\x00')].decode())              
+                data = data.split(b'\x00')[0]
+                try:
+                    request = json.loads(data.decode())
+                except ValueError:
+                    json_data = {
+                        "command": "nack",
+                        "message": "invalid json"
+                    }
+                    self.request.sendall(json.dumps(json_data).encode())
+                    continue
             except ConnectionResetError:
                 self.server.disconnect(client_id)
                 return
@@ -178,7 +187,7 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
     def attach_voice_server(self, voice_server):
         self.voice_server = voice_server
 
-HOST = '127.0.0.1'
+HOST = '192.168.1.85'
 voice_port = 50038
 command_port = 50039
 
