@@ -138,7 +138,7 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
             "users": [c for c in self.voice_server.allowed_connections]
         }
         for client in self.connections:
-            self.send_data(json.dumps(json_data))
+            self.send_data(client.socket, json.dumps(json_data))
 
     def add_client_if_new(self, client_id, socket):
         for client in self.connections:
