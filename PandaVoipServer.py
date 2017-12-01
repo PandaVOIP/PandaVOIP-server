@@ -135,7 +135,7 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         users_str = "".join([str(c).zfill(8) for c in self.voice_server.allowed_connections])
         json_data = {
             "command": "update_voice_users",
-            "users": [c for c in self.voice_server.allowed_connections]
+            "users": [str(c) for c in self.voice_server.allowed_connections]
         }
         for client in self.connections:
             self.send_data(client.socket, json.dumps(json_data))
