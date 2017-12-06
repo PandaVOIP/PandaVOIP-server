@@ -92,6 +92,7 @@ class TCPCommandHandler(socketserver.BaseRequestHandler):
                     "message": command
                 }
                 self.server.send_data(self.request, json.dumps(json_data))
+                self.server.update_chat_clients()
                 self.server.update_voice_clients()
             elif command == "voice connect":
                 json_data = {
@@ -133,11 +134,20 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         socket.sendall(str(length).zfill(10).encode())
         socket.sendall(message.encode())
 
+    def update_chat_clients(self):
+        users = [str(c.client_id).zfill(8) for c in self.connections]
+        json_data = {
+            "command": "update_chat_users",
+            "users": users
+        }
+        for client in self.connections:
+            self.send_data(client.socket, json.dumps(json_data))
+
     def update_voice_clients(self):
-        users_str = "".join([str(c).zfill(8) for c in self.voice_server.allowed_connections])
+        users = [str(c).zfill(8) for c in self.voice_server.allowed_connections]
         json_data = {
             "command": "update_voice_users",
-            "users": [str(c) for c in self.voice_server.allowed_connections]
+            "users": users
         }
         for client in self.connections:
             self.send_data(client.socket, json.dumps(json_data))
@@ -157,6 +167,7 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
                 print("command disconnect:", client_id)
                 print("command clients:", [cli.client_id for cli in self.connections])
                 break
+        self.update_chat_clients()
         self.voice_disconnect(client_id)
 
     def text_message(self, client_id, request):
@@ -189,7 +200,7 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
     def attach_voice_server(self, voice_server):
         self.voice_server = voice_server
 
-HOST = '192.168.1.85'
+HOST = 'localhost'
 voice_port = 50038
 command_port = 50039
 
