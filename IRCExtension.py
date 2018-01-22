@@ -3,12 +3,13 @@ from irc.server import *
 
 class CustomIRC(object):
     def __init__(self, request, client_address, server):
+        self.request = request
         self.user = None
         self.host = client_address  # Client's hostname / ip.
         self.realname = None        # Client's real name
         self.nick = None            # Client's currently registered nickname
         self.send_queue = []        # Messages to send to client (strings)
-        self.channels = {'general': IRCChannel('general')}         # Channels the client is in
+        self.channels = dict()        # Channels the client is in
         self.buffer = None
     
     def irc_handle(self, data):
@@ -258,6 +259,7 @@ class CustomIRC(object):
                 if channel:
                     for client in channel.clients:
                         client._send(response)
+                print(channel.clients)
                 channel.clients.remove(self)
                 self.channels.pop(pchannel)
             else:
@@ -275,6 +277,7 @@ class CustomIRC(object):
         for channel in self.channels.values():
             for client in channel.clients:
                 client._send(response)
+            print(channel.clients)
             channel.clients.remove(self)
 
     def handle_dump(self, params):
