@@ -1,7 +1,7 @@
 import socketserver
 from irc.server import *
 
-class CustomIRC(socketserver.BaseRequestHandler):
+class CustomIRC(object):
     def __init__(self, request, client_address, server):
         self.user = None
         self.host = client_address  # Client's hostname / ip.
@@ -10,9 +10,7 @@ class CustomIRC(socketserver.BaseRequestHandler):
         self.send_queue = []        # Messages to send to client (strings)
         self.channels = {'general': IRCChannel('general')}         # Channels the client is in
         self.buffer = None
-
-        super().__init__(request, client_address, server)
-
+    
     def irc_handle(self, data):
         while self.send_queue:
             msg = self.send_queue.pop(0)

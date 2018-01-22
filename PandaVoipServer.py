@@ -75,7 +75,12 @@ class CommandClient(object):
         return self.client_id == client_id
 
 
-class TCPCommandHandler(CustomIRC):
+class TCPCommandHandler(socketserver.BaseRequestHandler, CustomIRC):
+    def __init__(self, *args, **kwargs):
+        CustomIRC.__init__(self, *args, **kwargs)
+        super(TCPCommandHandler, self).__init__(*args, **kwargs)
+
+
     def handle(self):
         # handle their connection until they disconnect
         while True:
