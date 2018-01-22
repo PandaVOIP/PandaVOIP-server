@@ -5,6 +5,7 @@ import sys
 import time
 import json
 
+from IRCExtension import CustomIRC
 
 # object for voice client information
 class VoiceClient(object):
@@ -74,15 +75,20 @@ class CommandClient(object):
         return self.client_id == client_id
 
 
-class TCPCommandHandler(socketserver.BaseRequestHandler):
+class TCPCommandHandler(CustomIRC):
     def handle(self):
         # handle their connection until they disconnect
         while True:
             try:
                 # read the data
                 data = self.request.recv(8192).strip()
+                print(data)
                 # only care about the non 0 data
                 data = data.split(b'\x00')[0]
+                if data[0] is not '{':    
+                    self.irc_handle(data)
+                    continue
+                    
                 try:
                     # try to parse a json
                     request = json.loads(data.decode())
@@ -150,7 +156,10 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         super(ThreadedCommandServer, self).__init__(*args, **kwargs)
         self.allow_reuse_address = True
         self.connections = []
+        self.clients = {}
         self.voice_server = None
+        self.servername = "panda"
+        self.channels = {}
 
     # wrapper for sending data
     def send_data(self, socket, message):
@@ -229,32 +238,36 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
     def attach_voice_server(self, voice_server):
         self.voice_server = voice_server
 
-HOST = 'localhost'
+HOST = '192.168.1.66'
 voice_port = 50038
 command_port = 50039
 
-# start voice server
-voice_server = ThreadedVoiceServer((HOST, voice_port), UDPVoiceHandler)
-voice_server_thread = threading.Thread(target=voice_server.serve_forever)
-voice_server_thread.daemon = True
-voice_server_thread.start()
-
-# start the command server
-command_server = ThreadedCommandServer((HOST, command_port), TCPCommandHandler)
-command_server_thread = threading.Thread(target=command_server.serve_forever)
-command_server_thread.daemon = True
-command_server_thread.start()
-
-# give each server a reference of the other
-voice_server.attach_command_server(command_server)
-command_server.attach_voice_server(voice_server)
-
-print("running")
-
 try:
+
+    # start voice server
+    voice_server = ThreadedVoiceServer((HOST, voice_port), UDPVoiceHandler)
+    voice_server_thread = threading.Thread(target=voice_server.serve_forever)
+    voice_server_thread.daemon = True
+    voice_server_thread.start()
+
+    # start the command server
+    command_server = ThreadedCommandServer((HOST, command_port), TCPCommandHandler)
+    command_server_thread = threading.Thread(target=command_server.serve_forever)
+    command_server_thread.daemon = True
+    command_server_thread.start()
+
+    # give each server a reference of the other
+    voice_server.attach_command_server(command_server)
+    command_server.attach_voice_server(voice_server)
+
+    print("running")
+
+
     voice_server_thread.join()
     command_server_thread.join()
 except:
+    traceback.print_exc()
+    input()
     command_server.server_close()
     voice_server.server_close()
-    traceback.print_exc()
+    
