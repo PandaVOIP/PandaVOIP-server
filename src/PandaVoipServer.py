@@ -1,9 +1,13 @@
 import socketserver
 import threading
 import traceback
+import os
 import sys
 import time
 import json
+import re
+
+from configparser import ConfigParser
 
 from IRCExtension import CustomIRC
 
@@ -243,20 +247,60 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
     def attach_voice_server(self, voice_server):
         self.voice_server = voice_server
 
-HOST = '192.168.1.66'
-voice_port = 50038
-command_port = 50039
+class ServerConfig(object):
+    def __init__(self, filename):
+        self.parser = ConfigParser()
+        self.standard_config = {
+            "main": {
+                "ip": "",
+                "command_port": "50039",
+                "voice_port": "50038",
+            },
+        }
+        self.read_or_create()
+        self.verify_config()
+        
+    def read_or_create(self):
+        if not os.path.exists("config.ini"):
+            self.parser.read_dict(self.standard_config)
+            with open("config.ini", "w") as file:
+                self.parser.write(file)
+        else:
+            self.parser.read("config.ini")
+
+    def verify_config(self):
+        patterns = {
+            "ip": r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$",
+            "port": r"^[0-9]+$",
+        }
+        assertions = [
+            (self.parser["main"]["ip"] is not "", "IP address is not set in config file."),
+            (re.match(patterns["ip"], self.parser["main"]["ip"]), "Invalid IP address."),
+            (re.match(patterns["port"], self.parser["main"]["command_port"]), "Invalid command port."),
+            (re.match(patterns["port"], self.parser["main"]["voice_port"]), "Invalid voice port.")
+        ]   
+        abort = False
+        for test in assertions:
+            if not test[0]:
+                abort = True
+                print("CONFIGURE ERROR: " + test[1])
+        if abort:
+            sys.exit()
+
+config = ServerConfig("config.ini")
+host = config.parser["main"]["ip"]
+voice_port = int(config.parser["main"]["voice_port"])
+command_port = int(config.parser["main"]["command_port"])
 
 try:
-
     # start voice server
-    voice_server = ThreadedVoiceServer((HOST, voice_port), UDPVoiceHandler)
+    voice_server = ThreadedVoiceServer((host, voice_port), UDPVoiceHandler)
     voice_server_thread = threading.Thread(target=voice_server.serve_forever)
     voice_server_thread.daemon = True
     voice_server_thread.start()
 
     # start the command server
-    command_server = ThreadedCommandServer((HOST, command_port), TCPCommandHandler)
+    command_server = ThreadedCommandServer((host, command_port), TCPCommandHandler)
     command_server_thread = threading.Thread(target=command_server.serve_forever)
     command_server_thread.daemon = True
     command_server_thread.start()
@@ -272,7 +316,7 @@ try:
     command_server_thread.join()
 except:
     traceback.print_exc()
-    input()
     command_server.server_close()
     voice_server.server_close()
+    input()
     
