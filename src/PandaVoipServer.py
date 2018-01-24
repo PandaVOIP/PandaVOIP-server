@@ -95,10 +95,10 @@ class TCPCommandHandler(socketserver.BaseRequestHandler, CustomIRC):
                 print(data)
                 # only care about the non 0 data
                 data = data.split(b'\x00')[0]
-                if data[0] is not '{':    
+                if data[0] is not '{':
                     self.irc_handle(data)
                     continue
-                    
+
                 try:
                     # try to parse a json
                     request = json.loads(data.decode())
@@ -163,6 +163,8 @@ class TCPCommandHandler(socketserver.BaseRequestHandler, CustomIRC):
 
 class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     def __init__(self, *args, **kwargs):
+        key_file = kwargs.pop("key_file", None)
+        cert_file = kwargs.pop("cert_file", None)
         super(ThreadedCommandServer, self).__init__(*args, **kwargs)
         self.allow_reuse_address = True
         self.connections = []
@@ -170,8 +172,6 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         self.voice_server = None
         self.servername = "panda"
         self.channels = {}
-        key_file = kwargs.get("key_file", None)
-        cert_file = kwargs.get("cert_file", None)
         if key_file and cert_file:
             self.socket = ssl.wrap_socket(
                             self.socket, 
@@ -179,6 +179,7 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
                             certfile=cert_file, 
                             cert_reqs=ssl.CERT_NONE
                             )
+            print("SSL files found. Using encrypted connections.")
         else:
             print("SSL files not found or not configured properly. Using unencrypted connections.")
 
@@ -278,7 +279,7 @@ class ServerConfig(object):
         
     def read_or_create(self):
         if not os.path.exists("config.ini"):
-            self.create_file()
+            self.create_default_file()
         else:
             self.parser.read("config.ini")
             # ugly, but it is always only 2 levels
@@ -327,6 +328,8 @@ config = ServerConfig("config.ini")
 host = config.parser["main"]["ip"]
 voice_port = int(config.parser["main"]["voice_port"])
 command_port = int(config.parser["main"]["command_port"])
+key_file = config.parser["ssl"]["key_file"]
+cert_file = config.parser["ssl"]["cert_file"]
 
 try:
     print("")
@@ -339,7 +342,7 @@ try:
 
     print("Starting command server")
     # start the command server
-    command_server = ThreadedCommandServer((host, command_port), TCPCommandHandler)
+    command_server = ThreadedCommandServer((host, command_port), TCPCommandHandler, key_file=key_file, cert_file=cert_file)
     command_server_thread = threading.Thread(target=command_server.serve_forever)
     command_server_thread.daemon = True
     command_server_thread.start()
