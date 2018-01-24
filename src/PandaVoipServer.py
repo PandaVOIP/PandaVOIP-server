@@ -6,6 +6,7 @@ import sys
 import time
 import json
 import re
+import ssl
 
 from configparser import ConfigParser
 
@@ -169,6 +170,17 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         self.voice_server = None
         self.servername = "panda"
         self.channels = {}
+        key_file = kwargs.get("key_file", None)
+        cert_file = kwargs.get("cert_file", None)
+        if key_file and cert_file:
+            self.socket = ssl.wrap_socket(
+                            self.socket, 
+                            keyfile=key_file, 
+                            certfile=cert_file, 
+                            cert_reqs=ssl.CERT_NONE
+                            )
+        else:
+            print("SSL files not found or not configured properly. Using unencrypted connections.")
 
     # wrapper for sending data
     def send_data(self, socket, message):
@@ -256,17 +268,35 @@ class ServerConfig(object):
                 "command_port": "50039",
                 "voice_port": "50038",
             },
+            "ssl": {
+                "key_file": "",
+                "cert_file": ""
+            }
         }
         self.read_or_create()
         self.verify_config()
         
     def read_or_create(self):
         if not os.path.exists("config.ini"):
-            self.parser.read_dict(self.standard_config)
-            with open("config.ini", "w") as file:
-                self.parser.write(file)
+            self.create_file()
         else:
             self.parser.read("config.ini")
+            # ugly, but it is always only 2 levels
+            for section in self.standard_config.keys():
+                if section not in self.parser.keys() and section is not "DEFAULT":
+                    print(section + " not found in config file. Creating default...")
+                    self.parser[section] = self.standard_config[section]
+                for key in self.standard_config[section].keys():
+                    if key not in self.parser[section].keys():
+                        print(key + " not found in " + section + " section. Creating default...")
+                        self.parser[section][key] = self.standard_config[section][key]
+            with open("config.ini", "w") as file:
+                self.parser.write(file)
+
+    def create_default_file(self):
+        self.parser.read_dict(self.standard_config)
+        with open("config.ini", "w") as file:
+            self.parser.write(file)
 
     def verify_config(self):
         patterns = {
@@ -277,7 +307,9 @@ class ServerConfig(object):
             (self.parser["main"]["ip"] is not "", "IP address is not set in config file."),
             (re.match(patterns["ip"], self.parser["main"]["ip"]), "Invalid IP address."),
             (re.match(patterns["port"], self.parser["main"]["command_port"]), "Invalid command port."),
-            (re.match(patterns["port"], self.parser["main"]["voice_port"]), "Invalid voice port.")
+            (re.match(patterns["port"], self.parser["main"]["voice_port"]), "Invalid voice port."),
+            (os.path.exists(self.parser["ssl"]["key_file"]) if self.parser["ssl"]["key_file"] is not "" else True, "Cannot find SSL key file."),
+            (os.path.exists(self.parser["ssl"]["cert_file"]) if self.parser["ssl"]["cert_file"] is not "" else True, "Cannot find SSL key file."),
         ]   
         abort = False
         for test in assertions:
@@ -287,18 +319,25 @@ class ServerConfig(object):
         if abort:
             sys.exit()
 
+print("Startup")
+
+print()
+print("Reading config file")
 config = ServerConfig("config.ini")
 host = config.parser["main"]["ip"]
 voice_port = int(config.parser["main"]["voice_port"])
 command_port = int(config.parser["main"]["command_port"])
 
 try:
+    print("")
+    print("Starting voice server")
     # start voice server
     voice_server = ThreadedVoiceServer((host, voice_port), UDPVoiceHandler)
     voice_server_thread = threading.Thread(target=voice_server.serve_forever)
     voice_server_thread.daemon = True
     voice_server_thread.start()
 
+    print("Starting command server")
     # start the command server
     command_server = ThreadedCommandServer((host, command_port), TCPCommandHandler)
     command_server_thread = threading.Thread(target=command_server.serve_forever)
@@ -309,7 +348,8 @@ try:
     voice_server.attach_command_server(command_server)
     command_server.attach_voice_server(voice_server)
 
-    print("running")
+    print("")
+    print("Serving")
 
 
     voice_server_thread.join()
