@@ -165,6 +165,7 @@ class TCPCommandHandler(socketserver.BaseRequestHandler, CustomIRC):
 
 class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     def __init__(self, *args, **kwargs):
+        self.channels = {}
         key_file = kwargs.pop("key_file", None)
         cert_file = kwargs.pop("cert_file", None)
         super(ThreadedCommandServer, self).__init__(*args, **kwargs)
@@ -173,7 +174,6 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         self.clients = {}
         self.voice_server = None
         self.servername = "panda"
-        self.channels = {}
         if key_file and cert_file:
             self.socket = ssl.wrap_socket(
                             self.socket, 
@@ -356,12 +356,14 @@ try:
     print("")
     print("Serving")
 
+    try:
+        voice_server_thread.join()
+        command_server_thread.join()
+    except KeyboardInterrupt:
+        sys.exit()
 
-    voice_server_thread.join()
-    command_server_thread.join()
 except:
     traceback.print_exc()
     command_server.server_close()
     voice_server.server_close()
-    input()
     

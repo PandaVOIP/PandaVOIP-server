@@ -11,7 +11,11 @@ class CustomIRC(object):
         self.send_queue = []        # Messages to send to client (strings)
         self.channels = dict()        # Channels the client is in
         self.buffer = None
-    
+        server.channels.setdefault(
+            "#general",
+            IRCChannel("#general")
+        )
+
     def irc_handle(self, data):
         while self.send_queue:
             msg = self.send_queue.pop(0)
