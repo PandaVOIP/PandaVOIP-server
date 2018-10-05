@@ -95,6 +95,8 @@ class TCPCommandHandler(socketserver.BaseRequestHandler, CustomIRC):
                 # read the data
                 data = self.request.recv(8192).strip()
                 print(data)
+                if not data:
+                    continue
                 # only care about the non 0 data
                 data = data.split(b'\x00')[0]
                 if data[0] is not '{':
@@ -173,7 +175,7 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         self.connections = []
         self.clients = {}
         self.voice_server = None
-        self.servername = "panda"
+        self.servername = "ritlew.com"
         if key_file and cert_file:
             self.socket = ssl.wrap_socket(
                             self.socket, 

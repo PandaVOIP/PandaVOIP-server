@@ -1,5 +1,9 @@
 import socketserver
-from irc.server import *
+import logging
+
+FORMAT = '%(asctime)-15s %(message)s'
+logging.basicConfig(format=FORMAT)
+log = logging.getLogger('tcpserver')
 
 class CustomIRC(object):
     def __init__(self, request, client_address, server):
@@ -11,10 +15,6 @@ class CustomIRC(object):
         self.send_queue = []        # Messages to send to client (strings)
         self.channels = dict()        # Channels the client is in
         self.buffer = None
-        server.channels.setdefault(
-            "#general",
-            IRCChannel("#general")
-        )
 
     def irc_handle(self, data):
         while self.send_queue:
@@ -33,16 +33,12 @@ class CustomIRC(object):
             if not handler:
                 _tmpl = 'No handler for command: %s. Full line: %s'
                 log.info(_tmpl % (command, line))
-                raise IRCError.from_name(
-                    'unknowncommand',
-                    '%s :Unknown command' % command)
-            response = handler(params)
+                response = "421 " + command + " :Unknown command"
+            else:
+                response = handler(params)
         except AttributeError as e:
             log.error(six.text_type(e))
             raise
-        except IRCError as e:
-            response = ':%s %s %s' % (self.server.servername, e.code, e.value)
-            log.error(response)
         except Exception as e:
             response = ':%s ERROR %r' % (self.server.servername, e)
             log.error(response)
@@ -70,8 +66,6 @@ class CustomIRC(object):
         nick = params
         print("nick")
         # Valid nickname?
-        if re.search('[^a-zA-Z0-9\-\[\]\'`^{}_]', nick):
-            raise IRCError.from_name('erroneusnickname', ':%s' % nick)
 
         if self.server.clients.get(nick, None) == self:
             # Already registered to user
@@ -79,16 +73,17 @@ class CustomIRC(object):
 
         if nick in self.server.clients:
             # Someone else is using the nick
-            raise IRCError.from_name('nicknameinuse', 'NICK :%s' % (nick))
+            pass
 
         if not self.nick:
             # New connection and nick is available; register and send welcome
             # and MOTD.
             self.nick = nick
             self.server.clients[nick] = self
-            response = ':%s %s %s :%s' % (
-                self.server.servername,
-                events.codes['welcome'], self.nick, SRV_WELCOME)
+            response = ":{} {} {} :{}".format(
+                self.server.servername, "001", nick,
+                "Welcome to the Hug Hug Panda Club " + nick + "!" + nick + "@" + "panda"
+            )
             self._send(response)
             response = ':%s 376 %s :End of MOTD command.' % (
                 self.server.servername, self.nick)
@@ -117,9 +112,8 @@ class CustomIRC(object):
         params = params.split(' ', 3)
 
         if len(params) != 4:
-            raise IRCError.from_name(
-                'needmoreparams',
-                'USER :Not enough parameters')
+            # need more params
+            pass
 
         user, mode, unused, realname = params
         self.user = user
@@ -145,15 +139,9 @@ class CustomIRC(object):
 
             # Valid channel name?
             if not re.match('^#([a-zA-Z0-9_])+$', r_channel_name):
-                raise IRCError.from_name(
-                    'nosuchchannel',
-                    '%s :No such channel' % r_channel_name)
+                pass
 
             # Add user to the channel (create new channel if not exists)
-            channel = self.server.channels.setdefault(
-                r_channel_name,
-                IRCChannel(r_channel_name))
-            channel.clients.add(self)
 
             # Add channel to user's channel list
             self.channels[channel.name] = channel
@@ -189,29 +177,26 @@ class CustomIRC(object):
         """
         target, sep, msg = params.partition(' ')
         if not msg:
-            raise IRCError.from_name(
-                'needmoreparams',
-                'PRIVMSG :Not enough parameters')
+            # need more params
+            pass
 
         message = ':%s PRIVMSG %s %s' % (self.client_ident(), target, msg)
         if target.startswith('#') or target.startswith('$'):
             # Message to channel. Check if the channel exists.
             channel = self.server.channels.get(target)
             if not channel:
-                raise IRCError.from_name('nosuchnick', 'PRIVMSG :%s' % target)
+                pass
 
             if channel.name not in self.channels:
                 # The user isn't in the channel.
-                raise IRCError.from_name(
-                    'cannotsendtochan',
-                    '%s :Cannot send to channel' % channel.name)
+                pass
 
             self._send_to_others(message, channel)
         else:
             # Message to user
             client = self.server.clients.get(target, None)
             if not client:
-                raise IRCError.from_name('nosuchnick', 'PRIVMSG :%s' % target)
+                pass
 
             client._send(message)
 
@@ -234,13 +219,10 @@ class CustomIRC(object):
 
         channel = self.server.channels.get(channel_name)
         if not channel:
-            raise IRCError.from_name(
-                'nosuchnick', 'PRIVMSG :%s' % channel_name)
+            pass
         if channel.name not in self.channels:
             # The user isn't in the channel.
-            raise IRCError.from_name(
-                'cannotsendtochan',
-                '%s :Cannot send to channel' % channel.name)
+            pass
 
         if topic:
             channel.topic = topic.lstrip(':')
@@ -315,9 +297,7 @@ class CustomIRC(object):
         """
         Return the client identifier as included in many command replies.
         """
-        return irc.client.NickMask.from_params(
-            self.nick, self.user,
-            self.server.servername)
+        return "sam"
 
     def finish(self):
         """
