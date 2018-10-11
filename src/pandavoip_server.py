@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import socketserver
+import socket
+import select
 import threading
 import traceback
 import os
@@ -13,6 +15,18 @@ import ssl
 from configparser import ConfigParser
 
 from irc_extension import CustomIRC
+
+def get_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't even have to be reachable
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP 
 
 # object for voice client information
 class VoiceClient(object):
@@ -74,100 +88,114 @@ class ThreadedVoiceServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
 
 
 class CommandClient(object):
-    def __init__(self, client_id, socket):
+    def __init__(self, client_id, socket, client_type):
         self.socket = socket
         self.client_id = client_id
+        self.client_ident = "" 
+        self.client_type = client_type
+        self.username = ""
+        self.channels = list()
 
     def am_i(self, client_id):
         return self.client_id == client_id
 
+class TextChatChannel(object):
+    def __init__(self, name, topic="No topic is set"):
+        self.name = name
+        self.topc = topic
 
-class TCPCommandHandler(socketserver.BaseRequestHandler, CustomIRC):
+class TCPCommandHandler(socketserver.BaseRequestHandler):
     def __init__(self, *args, **kwargs):
+        self.client_id = -1
+        self.username = None
+        self.host = args.pop("client_address");
+        self.send_queue = []        
+        self.channels = list()      
         CustomIRC.__init__(self, *args, **kwargs)
         super(TCPCommandHandler, self).__init__(*args, **kwargs)
 
 
     def handle(self):
+        client_id = -1
         # handle their connection until they disconnect
         while True:
+            # read the data
             try:
-                # read the data
                 data = self.request.recv(8192).strip()
-                print(data)
-                if not data:
-                    continue
-                # only care about the non 0 data
-                data = data.split(b'\x00')[0]
-                if data[0] is not '{':
-                    self.irc_handle(data)
-                    continue
-
-                try:
-                    # try to parse a json
-                    request = json.loads(data.decode())
-                except ValueError:
-                    # tell them if it is invalid
-                    json_data = {
-                        "command": "nack",
-                        "message": "invalid json"
-                    }
-                    self.server.send_data(self.request, json.dumps(json_data))
-                    continue
-            # client disconnect
             except ConnectionResetError:
-                self.server.disconnect(client_id)
+                print("{} client closed".format(self.client_address[0]))
                 return
+            print(data)
+            if not data:
+                print("closing con")
+                return
+            # only care about the non 0 data
+            data = data.split(b'\x00')[0]
+            if data[0] is not '{':
+                self.irc_handle(data)
+                continue
 
-            # parse the data
-            client_id = request['client_id']
-            command = request['command']
-            self.server.add_client_if_new(client_id, self.request)
-
-            # establishing a new connection
-            if command == "establish":
-                json_data = {
-                    "command": "ack",
-                    "message": command
-                }
-                self.server.send_data(self.request, json.dumps(json_data))
-                self.server.update_chat_clients()
-                self.server.update_voice_clients()
-            # connecting to the voice chat
-            elif command == "voice connect":
-                json_data = {
-                    "command": "ack",
-                    "message": command
-                }
-                self.server.voice_connect(client_id)
-                self.server.send_data(self.request, json.dumps(json_data))
-
-                self.server.update_voice_clients()
-            # disconnecting from voice chat
-            elif command == "voice disconnect":
-                json_data = {
-                    "command": "ack",
-                    "message": command
-                }
-                self.server.voice_disconnect(client_id)
-                self.server.send_data(self.request, json.dumps(json_data))
-
-                self.server.update_voice_clients()
-            # sending a text message
-            elif command == "text message":
-                self.server.text_message(client_id, request)
-            # anything else isn't valid
-            else:
+            try:
+                # try to parse a json
+                request = json.loads(data.decode())
+            except ValueError:
+                # tell them if it is invalid
                 json_data = {
                     "command": "nack",
-                    "message": "unknown command"
+                    "message": "invalid json"
                 }
-                print("received unknown command from " + str(client_id) + ": " + command)
+                self.server.send_data(self.request, json.dumps(json_data))
+                continue
+
+        # parse the data
+        client_id = request['client_id']
+        command = request['command']
+        self.command_client = self.server.add_client_if_new(client_id, self.request)
+
+        # establishing a new connection
+        if command == "establish":
+            json_data = {
+                "command": "ack",
+                "message": command
+            }
+            self.server.send_data(self.request, json.dumps(json_data))
+            self.server.update_chat_clients()
+            self.server.update_voice_clients()
+        # connecting to the voice chat
+        elif command == "voice connect":
+            json_data = {
+                "command": "ack",
+                "message": command
+            }
+            self.server.voice_connect(client_id)
+            self.server.send_data(self.request, json.dumps(json_data))
+
+            self.server.update_voice_clients()
+        # disconnecting from voice chat
+        elif command == "voice disconnect":
+            json_data = {
+                "command": "ack",
+                "message": command
+            }
+            self.server.voice_disconnect(client_id)
+            self.server.send_data(self.request, json.dumps(json_data))
+
+            self.server.update_voice_clients()
+        # sending a text message
+        elif command == "text message":
+            self.server.text_message(client_id, request)
+        # anything else isn't valid
+        else:
+            json_data = {
+                "command": "nack",
+                "message": "unknown command"
+            }
+            print("received unknown command from " + str(client_id) + ": " + command)
 
 
 class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     def __init__(self, *args, **kwargs):
-        self.channels = {}
+        self.channels = list()
         key_file = kwargs.pop("key_file", None)
         cert_file = kwargs.pop("cert_file", None)
         super(ThreadedCommandServer, self).__init__(*args, **kwargs)
@@ -176,6 +204,9 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         self.clients = {}
         self.voice_server = None
         self.servername = "ritlew.com"
+
+        self.create_new_channel("#general", "General chat for all users")
+
         if key_file and cert_file:
             self.socket = ssl.wrap_socket(
                             self.socket, 
@@ -186,6 +217,21 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
             print("SSL files found. Using encrypted connections.")
         else:
             print("SSL files not found or not configured properly. Using unencrypted connections.")
+
+    def create_new_channel(self, channel_name, topic="No topic is set"):
+        self.channels.append({
+            "name": channel_name,
+            "topic": topic,
+            "members": list(),
+        })
+
+    def get_channel(self, channel_name):
+        result = None
+        for channel in self.channels:
+            if channel["name"] == channel_name:
+                result = channel
+
+        return result 
 
     # wrapper for sending data
     def send_data(self, socket, message):
@@ -215,23 +261,26 @@ class ThreadedCommandServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         for client in self.connections:
             self.send_data(client.socket, json.dumps(json_data))
 
-    def add_client_if_new(self, client_id, socket):
+    def add_client_if_new(self, client_id, socket, client_type="panda"):
         for client in self.connections:
             if client.am_i(client_id):
                 return
 
         print("add tcp with client_id:", client_id)
-        self.connections.append(CommandClient(client_id, socket))
+        new_client = CommandClient(client_id, socket, client_type)
+        self.connections.append(new_client)
+        return new_client
 
     def disconnect(self, client_id):
-        for client in self.connections:
-            if client.am_i(client_id):
-                self.connections.remove(client)
-                print("command disconnect:", client_id)
-                print("command clients:", [cli.client_id for cli in self.connections])
-                break
-        self.update_chat_clients()
-        self.voice_disconnect(client_id)
+        if client_id != -1:
+            for client in self.connections:
+                if client.am_i(client_id):
+                    self.connections.remove(client)
+                    print("command disconnect:", client_id)
+                    print("command clients:", [cli.client_id for cli in self.connections])
+                    break
+            self.update_chat_clients()
+            self.voice_disconnect(client_id)
 
     # relays a chat message to all users
     def text_message(self, client_id, request):
@@ -310,7 +359,7 @@ class ServerConfig(object):
         }
         assertions = [
             (self.parser["main"]["ip"] is not "", "IP address is not set in config file."),
-            (re.match(patterns["ip"], self.parser["main"]["ip"]), "Invalid IP address."),
+            (re.match(patterns["ip"], self.parser["main"]["ip"]) or self.parser["main"]["ip"] == "localhost", "Invalid IP address."),
             (re.match(patterns["port"], self.parser["main"]["command_port"]), "Invalid command port."),
             (re.match(patterns["port"], self.parser["main"]["voice_port"]), "Invalid voice port."),
             (os.path.exists(self.parser["ssl"]["key_file"]) if self.parser["ssl"]["key_file"] is not "" else True, "Cannot find SSL key file."),
@@ -330,6 +379,8 @@ print()
 print("Reading config file")
 config = ServerConfig("config.ini")
 host = config.parser["main"]["ip"]
+if host == "localhost":
+    host = get_ip()
 voice_port = int(config.parser["main"]["voice_port"])
 command_port = int(config.parser["main"]["command_port"])
 key_file = config.parser["ssl"]["key_file"]
@@ -356,7 +407,7 @@ try:
     command_server.attach_voice_server(voice_server)
 
     print("")
-    print("Serving")
+    print("Serving on " + host)
 
     try:
         voice_server_thread.join()
@@ -366,6 +417,4 @@ try:
 
 except:
     traceback.print_exc()
-    command_server.server_close()
-    voice_server.server_close()
     

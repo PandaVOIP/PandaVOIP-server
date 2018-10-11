@@ -1,20 +1,15 @@
 import socketserver
+import random
 import logging
+import re
 
-FORMAT = '%(asctime)-15s %(message)s'
-logging.basicConfig(format=FORMAT)
+logging.basicConfig(format='%(asctime)-15s %(message)s')
 log = logging.getLogger('tcpserver')
 
 class CustomIRC(object):
-    def __init__(self, request, client_address, server):
-        self.request = request
-        self.user = None
-        self.host = client_address  # Client's hostname / ip.
-        self.realname = None        # Client's real name
-        self.nick = None            # Client's currently registered nickname
-        self.send_queue = []        # Messages to send to client (strings)
-        self.channels = dict()        # Channels the client is in
-        self.buffer = None
+    def __init__(self):
+        self.nick = None            
+        self.realname = None        
 
     def irc_handle(self, data):
         while self.send_queue:
@@ -49,10 +44,12 @@ class CustomIRC(object):
 
         
 
-    def _send(self, msg):
+    def _send(self, msg, sock=None):
         print("sending", msg)
+        if sock == None:
+            sock = self.request
         try:
-            self.request.send(msg.encode('utf-8') + b'\r\n')
+            sock.send(msg.encode('utf-8') + b'\r\n')
         except socket.error as e:
             if e.errno == errno.EPIPE:
                 raise self.Disconnect()
@@ -80,14 +77,6 @@ class CustomIRC(object):
             # and MOTD.
             self.nick = nick
             self.server.clients[nick] = self
-            response = ":{} {} {} :{}".format(
-                self.server.servername, "001", nick,
-                "Welcome to the Hug Hug Panda Club " + nick + "!" + nick + "@" + "panda"
-            )
-            self._send(response)
-            response = ':%s 376 %s :End of MOTD command.' % (
-                self.server.servername, self.nick)
-            self._send(response)
             return
 
         # Nick is available. Change the nick.
@@ -95,11 +84,11 @@ class CustomIRC(object):
         print(message)
         self.server.clients.pop(self.nick)
         self.nick = nick
-        self.server.clients[self.nick] = self
+        self.server.clients.append(self.nick)
 
         # Send a notification of the nick change to all the clients in the
         # channels the client is in.
-        for channel in self.channels.values():
+        for channel in self.channels:
             self._send_to_others(message, channel)
 
         # Send a notification of the nick change to the client itself
@@ -119,14 +108,57 @@ class CustomIRC(object):
         self.user = user
         self.mode = mode
         self.realname = realname
-        return ''
+        response = ":{} {} {} :{}".format(
+            self.server.servername, "001", self.nick,
+            "Welcome to the Hug Hug Panda Club " + self.nick + "!" + self.user + "@" + self.server.servername
+        )
+        self._send(response)
+        response = ":{} {} {} :{}".format(
+            self.server.servername, "002", self.nick,
+            "LOL?"
+        )
+        self._send(response)
+        response = ":{} {} {} :{}".format(
+            self.server.servername, "003", self.nick,
+            "WORK!"
+        )
+        self._send(response)
+        response = ":{} {} {} :{}".format(
+            self.server.servername, "004", self.nick,
+            "please"
+        )
+        self._send(response)
+        response = ":{} {} {} :{}".format(
+            self.server.servername,
+            "376",
+            self.nick,
+            "Welcome to pandavoip. Feel free to join #general."
+        )
+        self._send(response)
+        self.client_id = random.randint(0, 1000000)
+        self.command_client = self.server.add_client_if_new(self.client_id, self.request, client_type="irc")
+        self.command_client.client_ident = self.client_ident()
+        self.command_client.username = self.nick
 
     def handle_ping(self, params):
         """
         Handle client PING requests to keep the connection alive.
         """
-        response = ':{self.server.servername} PONG :{self.server.servername}'
-        return response.format(**locals())
+        if len(params) < 1:
+            response = ":{} {} {} :{}".format(
+                self.server.servername,
+                "409",
+                self.nick,
+                "No origin specified"
+            )
+        else:
+            response = ":{} {} {} :{}".format(
+                self.server.servername,
+                "PONG",
+                self.nick,
+                params[1:]
+            )
+        self._send(response)
 
     def handle_join(self, params):
         """
@@ -135,41 +167,78 @@ class CustomIRC(object):
         """
         channel_names = params.split(' ', 1)[0]  # Ignore keys
         for channel_name in channel_names.split(','):
-            r_channel_name = channel_name.strip()
+            r_channel_name = channel_name.strip()[1:]
+            if r_channel_name[0] != '#':
+                r_channel_name = '#' + r_channel_name
 
             # Valid channel name?
             if not re.match('^#([a-zA-Z0-9_])+$', r_channel_name):
                 pass
 
             # Add user to the channel (create new channel if not exists)
+            channel = self.server.get_channel(r_channel_name)
 
             # Add channel to user's channel list
-            self.channels[channel.name] = channel
+            if r_channel_name not in self.channels:
+                self.channels = r_channel_name
+
+            channel["members"].append(self.command_client)
 
             # Send the topic
-            response_join = ':%s TOPIC %s :%s' % (
-                channel.topic_by,
-                channel.name, channel.topic)
-            self._send(response_join)
+            response = ":{} {} {} {} :{}".format(
+                self.server.servername,
+                "331",
+                self.nick,
+                r_channel_name,
+                "No topic is set"
+            )
+            self._send(response)
 
             # Send join message to everybody in the channel, including yourself
             # and send user list of the channel back to the user.
-            response_join = ':%s JOIN :%s' % (
+            response_join = ":{} JOIN {}".format(
                 self.client_ident(),
                 r_channel_name)
-            for client in channel.clients:
-                client._send(response_join)
+            for client in channel["members"]:
+                self._send(response_join, sock=client.socket)
 
-            nicks = [client.nick for client in channel.clients]
+            nicks = [c.username for c in channel["members"]]
             _vals = (
-                self.server.servername, self.nick, channel.name,
+                self.server.servername, self.nick, r_channel_name,
                 ' '.join(nicks))
             response_userlist = ':%s 353 %s = %s :%s' % _vals
             self._send(response_userlist)
 
-            _vals = self.server.servername, self.nick, channel.name
-            response = ':%s 366 %s %s :End of /NAMES list' % _vals
+            _vals = self.server.servername, self.nick, r_channel_name
+            response = ':%s 366 %s %s :End of NAMES list' % _vals
             self._send(response)
+
+    def handle_list(self, params):
+        response = ":{} {} {} {} :{} {}".format(
+            self.server.servername,
+            "321",
+            self.nick,
+            "Channel",
+            "Users",
+            "Name"
+        )
+        self._send(response)
+        response = ":{} {} {} {} {} :{}".format(
+            self.server.servername,
+            "322",
+            self.nick,
+            "#general",
+            len(self.server.get_channel("#general")["members"]),
+            "No topic is set"
+        )
+        self._send(response)
+        response = ":{} {} {} :{}".format(
+            self.server.servername,
+            "323",
+            self.nick,
+            "End of LIST"
+        )
+        self._send(response)
 
     def handle_privmsg(self, params):
         """
@@ -180,25 +249,31 @@ class CustomIRC(object):
             # need more params
             pass
 
-        message = ':%s PRIVMSG %s %s' % (self.client_ident(), target, msg)
+        response = ":{} {} {} {}".format(
+            self.client_ident(),
+            "PRIVMSG",
+            target,
+            msg,
+        )
         if target.startswith('#') or target.startswith('$'):
             # Message to channel. Check if the channel exists.
-            channel = self.server.channels.get(target)
+            channel = self.server.get_channel(target)
             if not channel:
-                pass
+                return
 
-            if channel.name not in self.channels:
+            if target not in self.channels:
                 # The user isn't in the channel.
-                pass
+                return
 
-            self._send_to_others(message, channel)
+            self._send_to_others(response, channel)
         else:
+            pass
             # Message to user
-            client = self.server.clients.get(target, None)
-            if not client:
-                pass
+            # client = self.server.clients.get(target, None)
+            # if not client:
+            #     pass
 
-            client._send(message)
+            # client._send(message)
 
     def _send_to_others(self, message, channel):
         """
@@ -206,10 +281,10 @@ class CustomIRC(object):
         self.
         """
         other_clients = [
-            client for client in channel.clients
-            if not client == self]
+            client for client in channel["members"] if not client.am_i(self.client_id)
+        ]
         for client in other_clients:
-            client._send(message)
+            self._send(message, sock=client.socket)
 
     def handle_topic(self, params):
         """
@@ -257,14 +332,14 @@ class CustomIRC(object):
         """
         Handle the client breaking off the connection with a QUIT command.
         """
-        response = ':%s QUIT :%s' % (self.client_ident(), params.lstrip(':'))
         # Send quit message to all clients in all channels user is in, and
         # remove the user from the channels.
-        for channel in self.channels.values():
-            for client in channel.clients:
-                client._send(response)
-            print(channel.clients)
-            channel.clients.remove(self)
+        response = ":{} {} :{}".format(
+            self.client_ident(),
+            "QUIT",
+            params.lstrip(':')
+        )
+        self._send(response)
 
     def handle_dump(self, params):
         """
@@ -297,7 +372,7 @@ class CustomIRC(object):
         """
         Return the client identifier as included in many command replies.
         """
-        return "sam"
+        return "{}!{}@{}".format(self.nick, self.user, self.server.servername)
 
     def finish(self):
         """
