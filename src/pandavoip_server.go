@@ -1,68 +1,109 @@
 package main
 
 import (
-    "bufio"
-    "strings"
-    "log"
-    "net"
-    "io"
+	"bufio"
+	"io"
+	"log"
+	"net"
+	"strings"
 )
 
-func handleConnection(c net.Conn){
-    log.Printf("Serving %s\n", c.RemoteAddr().String())
-    for {
-        netData, err := bufio.NewReader(c).ReadString('\n')
-        if err == io.EOF {
-            break
-        } else if err != nil {
-            log.Fatal(err)
-        }
+type CommandClient struct {
+	username string
+	conn     net.Conn
+}
 
-        temp := strings.TrimSpace(string(netData))
-        if temp == "STOP" {
-            break
-        }
+type CommandServer struct {
+	serverName string
+	users      []CommandClient
+}
 
-        result := "ok\n"
-        c.Write([]byte(string(result)))
-    }
-    log.Printf("Disconnected %s\n", c.RemoteAddr().String())
+func (server *CommandServer) clientDisconnect(user CommandClient) {
+	for i, u := range server.users {
+		if u == user {
+			server.users = append(server.users[:i], server.users[i+1:]...)
+			break
+		}
+	}
+}
 
-    c.Close()
+func (server *CommandServer) getUsernames() []string {
+	var names []string
+
+	for _, user := range server.users {
+		names = append(names, user.username)
+	}
+
+	return names
+}
+
+func (server *CommandServer) handleConnection(c net.Conn) {
+	log.Printf("Serving %s\n", c.RemoteAddr().String())
+
+	client := CommandClient{c.RemoteAddr().String(), c}
+
+	server.users = append(server.users, client)
+
+	log.Printf("Users: %v\n", server.getUsernames())
+
+	for {
+		netData, err := bufio.NewReader(c).ReadString('\n')
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			log.Fatal(err)
+		}
+
+		temp := strings.TrimSpace(string(netData))
+		if temp == "STOP" {
+			break
+		}
+
+		result := "ok\n"
+		c.Write([]byte(string(result)))
+	}
+	log.Printf("Disconnected %s\n", c.RemoteAddr().String())
+
+	server.clientDisconnect(client)
+	log.Printf("Users: %v\n", server.getUsernames())
+
+	c.Close()
 }
 
 func startServer() {
-    port := ":50039"
+	server := CommandServer{"ritlew.com", []CommandClient{}}
+	port := ":50039"
 
-    log.Printf("Starting server on %v%v\n", GetOutboundIP(), port);
+	log.Printf("Starting server on %v%v\n", GetOutboundIP(), port)
 
-    listener, err := net.Listen("tcp4", port);
-    if err != nil {
+	listener, err := net.Listen("tcp4", port)
+	if err != nil {
 		log.Fatal(err)
-    }
-    defer listener.Close()
+	}
+	defer listener.Close()
 
-    for {
-        c, err := listener.Accept()
-        if err != nil {
-            log.Fatal(err)
-        }
-        go handleConnection(c)
-    }
+	for {
+		c, err := listener.Accept()
+		if err != nil {
+			log.Fatal(err)
+		}
+		go server.handleConnection(c)
+	}
 }
 
 func GetOutboundIP() net.IP {
-    conn, err := net.Dial("udp", "8.8.8.8:80")
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer conn.Close()
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+	defer conn.Close()
 
-    localAddr := conn.LocalAddr().(*net.UDPAddr)
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
 
-    return localAddr.IP
+	return localAddr.IP
 }
 
 func main() {
-    startServer();
+	startServer()
 }
