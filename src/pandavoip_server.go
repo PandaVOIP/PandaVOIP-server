@@ -5,8 +5,21 @@ import (
 	"io"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 )
+
+func GetOutboundIP() net.IP {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	return localAddr.IP
+}
 
 type CommandClient struct {
 	username string
@@ -15,7 +28,27 @@ type CommandClient struct {
 
 type CommandServer struct {
 	serverName string
+	ip         net.IP
+	port       int
 	users      []CommandClient
+}
+
+func (server *CommandServer) startServer() {
+	log.Printf("Starting server on %v:%v\n", server.ip.String(), server.port)
+
+	listener, err := net.Listen("tcp4", ":"+strconv.Itoa(server.port))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer listener.Close()
+
+	for {
+		c, err := listener.Accept()
+		if err != nil {
+			log.Fatal(err)
+		}
+		go server.handleConnection(c)
+	}
 }
 
 func (server *CommandServer) clientDisconnect(user CommandClient) {
@@ -70,40 +103,11 @@ func (server *CommandServer) handleConnection(c net.Conn) {
 	c.Close()
 }
 
-func startServer() {
-	server := CommandServer{"ritlew.com", []CommandClient{}}
-	port := ":50039"
-
-	log.Printf("Starting server on %v%v\n", GetOutboundIP(), port)
-
-	listener, err := net.Listen("tcp4", port)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer listener.Close()
-
-	for {
-		c, err := listener.Accept()
-		if err != nil {
-			log.Fatal(err)
-		}
-		go server.handleConnection(c)
-	}
-}
-
-func GetOutboundIP() net.IP {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer conn.Close()
-	defer conn.Close()
-
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-
-	return localAddr.IP
-}
-
 func main() {
-	startServer()
+	server := CommandServer{
+		serverName: "ritlew.com",
+		ip:         GetOutboundIP(),
+		port:       50039,
+	}
+	server.startServer()
 }
